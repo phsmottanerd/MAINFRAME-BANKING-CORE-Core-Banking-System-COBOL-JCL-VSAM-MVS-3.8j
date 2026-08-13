@@ -1,0 +1,234 @@
+      *================================================================*
+      * PROGRAM: TRANSFER                                             *
+      * PURPOSE: FUNDS TRANSFER WITH FULL BUSINESS RULE VALIDATION   *
+      * AUTHOR:  MAINFRAME-BANKING-CORE                               *
+      * DATE:    2025                                                  *
+      * ENVIRONMENT: OS/VS COBOL - MVS 3.8J TK4-                     *
+      *================================================================*
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. TRANSFER.
+
+       ENVIRONMENT DIVISION.
+       CONFIGURATION SECTION.
+       SOURCE-COMPUTER. IBM-370.
+       OBJECT-COMPUTER. IBM-370.
+       INPUT-OUTPUT SECTION.
+       FILE-CONTROL.
+           SELECT ACCOUNT-FILE
+               ASSIGN TO ACCTMST
+               ORGANIZATION IS INDEXED
+               ACCESS MODE  IS RANDOM
+               RECORD KEY   IS ACCT-NBR
+               FILE STATUS  IS WS-ACCT-FILE-STATUS.
+           SELECT TRAN-HIST-FILE
+               ASSIGN TO TRANHIST
+               ORGANIZATION IS INDEXED
+               ACCESS MODE  IS RANDOM
+               RECORD KEY   IS TRAN-KEY
+               FILE STATUS  IS WS-TRAN-FILE-STATUS.
+
+       DATA DIVISION.
+       FILE SECTION.
+       FD  ACCOUNT-FILE
+           LABEL RECORDS ARE STANDARD
+           RECORD CONTAINS 110 CHARACTERS.
+       01  ACCOUNT-FILE-RECORD      PIC X(110).
+
+       FD  TRAN-HIST-FILE
+           LABEL RECORDS ARE STANDARD
+           RECORD CONTAINS 150 CHARACTERS.
+       01  TRAN-HIST-RECORD         PIC X(150).
+
+       WORKING-STORAGE SECTION.
+       COPY WRKSTORE.
+       COPY FILESTCD.
+       COPY MSGLIB.
+       COPY ACCTLAYO.
+       COPY TRANLAYO.
+
+       01  WS-SOURCE-ACCT-NBR       PIC X(10).
+       01  WS-TARGET-ACCT-NBR       PIC X(10).
+       01  WS-TRANSFER-AMT          PIC S9(13)V99 COMP-3.
+       01  WS-TRANSFER-INPUT        PIC X(16).
+       01  WS-AVAIL-BALANCE         PIC S9(13)V99 COMP-3.
+       01  WS-BALANCE-DISP          PIC ZZZ,ZZZ,ZZZ,ZZ9.99-.
+       01  WS-ANOTHER               PIC X(01).
+
+      *--- Second account record area (target) ----------------------*
+       01  TARGET-ACCOUNT-RECORD.
+           05  TARGET-ACCT-NBR      PIC X(10).
+           05  TARGET-CUST-ID       PIC X(08).
+           05  TARGET-ACCT-TYPE     PIC X(02).
+           05  TARGET-STATUS        PIC X(01).
+               88  TARGET-ACTIVE    VALUE 'A'.
+               88  TARGET-BLOCKED   VALUE 'B'.
+               88  TARGET-CLOSED    VALUE 'C'.
+           05  TARGET-BALANCE       PIC S9(13)V99  COMP-3.
+           05  TARGET-OVERDRAFT     PIC S9(13)V99  COMP-3.
+           05  TARGET-OPEN-DATE     PIC 9(08).
+           05  TARGET-LAST-MOV      PIC 9(08).
+           05  TARGET-BLOCK-DATE    PIC 9(08).
+           05  TARGET-BLOCK-REASON  PIC X(30).
+           05  TARGET-BRANCH        PIC X(04).
+           05  TARGET-FILLER        PIC X(05).
+
+       PROCEDURE DIVISION.
+
+       0000-MAIN.
+           MOVE 'TRANSFER' TO WS-PROGRAM-NAME
+           OPEN I-O ACCOUNT-FILE
+           IF WS-ACCT-FILE-STATUS NOT = '00'
+               DISPLAY 'TRANSFER: FILE OPEN ERROR FS='
+                        WS-ACCT-FILE-STATUS
+               STOP RUN
+           END-IF
+           OPEN I-O TRAN-HIST-FILE
+           IF WS-TRAN-FILE-STATUS = '35'
+               OPEN OUTPUT TRAN-HIST-FILE
+               CLOSE TRAN-HIST-FILE
+               OPEN I-O TRAN-HIST-FILE
+           END-IF
+           MOVE 'Y' TO WS-ANOTHER
+           PERFORM 1000-DO-TRANSFER
+               UNTIL WS-ANOTHER = 'N' OR 'n'
+           CLOSE ACCOUNT-FILE
+           CLOSE TRAN-HIST-FILE
+           GOBACK.
+
+       1000-DO-TRANSFER.
+           MOVE 'N'    TO WS-ERROR-FLAG
+           DISPLAY ' '
+           DISPLAY '=== TRANSFER ================================'
+           DISPLAY 'SOURCE ACCOUNT: ' WITH NO ADVANCING
+           ACCEPT  WS-SOURCE-ACCT-NBR
+           MOVE WS-SOURCE-ACCT-NBR TO ACCT-NBR
+           READ ACCOUNT-FILE INTO ACCOUNT-RECORD
+               KEY IS ACCT-NBR
+           EVALUATE WS-ACCT-FILE-STATUS
+             WHEN '23'
+               DISPLAY MSG-NOT-FOUND
+               MOVE 'Y' TO WS-ERROR-FLAG
+             WHEN '00' CONTINUE
+             WHEN OTHER
+               DISPLAY 'READ ERR SRC FS=' WS-ACCT-FILE-STATUS
+               MOVE 'Y' TO WS-ERROR-FLAG
+           END-EVALUATE
+           IF WS-ERROR-FLAG = 'Y' GO TO 1000-TRANSFER-SKIP END-IF
+           IF ACCT-BLOCKED
+               DISPLAY MSG-ACCT-BLOCKED
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           IF ACCT-CLOSED
+               DISPLAY MSG-ACCT-CLOSED
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           DISPLAY 'TARGET ACCOUNT: ' WITH NO ADVANCING
+           ACCEPT  WS-TARGET-ACCT-NBR
+           IF WS-TARGET-ACCT-NBR = WS-SOURCE-ACCT-NBR
+               DISPLAY 'SOURCE AND TARGET CANNOT BE THE SAME ACCOUNT'
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           MOVE WS-TARGET-ACCT-NBR TO TARGET-ACCT-NBR
+           MOVE WS-TARGET-ACCT-NBR TO ACCT-NBR
+           READ ACCOUNT-FILE INTO TARGET-ACCOUNT-RECORD
+               KEY IS ACCT-NBR
+           EVALUATE WS-ACCT-FILE-STATUS
+             WHEN '23'
+               DISPLAY MSG-TARGET-NFD
+               MOVE 'Y' TO WS-ERROR-FLAG
+             WHEN '00' CONTINUE
+             WHEN OTHER
+               DISPLAY 'READ ERR TGT FS=' WS-ACCT-FILE-STATUS
+               MOVE 'Y' TO WS-ERROR-FLAG
+           END-EVALUATE
+           IF WS-ERROR-FLAG = 'Y' GO TO 1000-TRANSFER-SKIP END-IF
+           IF TARGET-BLOCKED
+               DISPLAY 'TARGET ACCOUNT IS BLOCKED'
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           IF TARGET-CLOSED
+               DISPLAY 'TARGET ACCOUNT IS CLOSED'
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           MOVE WS-SOURCE-ACCT-NBR TO ACCT-NBR
+           READ ACCOUNT-FILE INTO ACCOUNT-RECORD
+               KEY IS ACCT-NBR
+           MOVE ACCT-BALANCE TO WS-BALANCE-DISP
+           DISPLAY 'SOURCE BALANCE: ' WS-BALANCE-DISP
+           DISPLAY 'TRANSFER AMOUNT: ' WITH NO ADVANCING
+           ACCEPT  WS-TRANSFER-INPUT
+           MOVE FUNCTION NUMVAL(WS-TRANSFER-INPUT) TO WS-TRANSFER-AMT
+           IF WS-TRANSFER-AMT <= 0
+               DISPLAY MSG-NEG-AMOUNT
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           COMPUTE WS-AVAIL-BALANCE = ACCT-BALANCE
+                                    + ACCT-OVERDRAFT-LIM
+           IF WS-TRANSFER-AMT > WS-AVAIL-BALANCE
+               DISPLAY MSG-INSUF-FUNDS
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+      *--- DEBIT SOURCE ----
+           SUBTRACT WS-TRANSFER-AMT FROM ACCT-BALANCE
+           CALL 'DATEVAL' USING WS-CURRENT-DATE
+           MOVE WS-CURRENT-DATE TO ACCT-LAST-MOV-DATE
+           REWRITE ACCOUNT-FILE-RECORD FROM ACCOUNT-RECORD
+           IF WS-ACCT-FILE-STATUS NOT = '00'
+               DISPLAY 'REWRITE SRC ERR FS=' WS-ACCT-FILE-STATUS
+               CALL 'ERRHANDL' USING WS-PROGRAM-NAME
+                                     WS-ACCT-FILE-STATUS
+                                     WS-SOURCE-ACCT-NBR
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+      *--- CREDIT TARGET ----
+           MOVE TARGET-ACCOUNT-RECORD TO ACCOUNT-FILE-RECORD
+           MOVE WS-TARGET-ACCT-NBR    TO ACCT-NBR
+           READ ACCOUNT-FILE INTO ACCOUNT-RECORD
+               KEY IS ACCT-NBR
+           ADD WS-TRANSFER-AMT TO ACCT-BALANCE
+           MOVE WS-CURRENT-DATE TO ACCT-LAST-MOV-DATE
+           REWRITE ACCOUNT-FILE-RECORD FROM ACCOUNT-RECORD
+           IF WS-ACCT-FILE-STATUS NOT = '00'
+               DISPLAY 'REWRITE TGT ERR FS=' WS-ACCT-FILE-STATUS
+               CALL 'ERRHANDL' USING WS-PROGRAM-NAME
+                                     WS-ACCT-FILE-STATUS
+                                     WS-TARGET-ACCT-NBR
+               GO TO 1000-TRANSFER-SKIP
+           END-IF
+           PERFORM 1100-WRITE-HISTORY-DEBIT
+           PERFORM 1200-WRITE-HISTORY-CREDIT
+           DISPLAY MSG-OPERATION-OK
+           DISPLAY 'TRANSFER OF ' WS-TRANSFER-AMT ' COMPLETED.'
+       1000-TRANSFER-SKIP.
+           DISPLAY 'ANOTHER TRANSFER? (Y/N): ' WITH NO ADVANCING
+           ACCEPT  WS-ANOTHER.
+
+       1100-WRITE-HISTORY-DEBIT.
+           MOVE SPACES              TO TRANSACTION-RECORD
+           MOVE WS-SOURCE-ACCT-NBR TO TRAN-ACCT-NBR
+           MOVE WS-CURRENT-DATE    TO TRAN-DATE
+           ADD 1 TO WS-TRAN-SEQ-CTR
+           MOVE WS-TRAN-SEQ-CTR    TO TRAN-SEQ
+           MOVE 'TR'               TO TRAN-TYPE
+           MOVE WS-TRANSFER-AMT    TO TRAN-AMOUNT
+           MOVE 'A'                TO TRAN-STATUS
+           MOVE WS-TARGET-ACCT-NBR TO TRAN-TARGET-ACCT
+           MOVE 'TSO'              TO TRAN-CHANNEL
+           WRITE TRAN-HIST-RECORD FROM TRANSACTION-RECORD
+           IF WS-TRAN-FILE-STATUS = '22'
+               ADD 1 TO WS-TRAN-SEQ-CTR
+               MOVE WS-TRAN-SEQ-CTR TO TRAN-SEQ
+               WRITE TRAN-HIST-RECORD FROM TRANSACTION-RECORD
+           END-IF.
+
+       1200-WRITE-HISTORY-CREDIT.
+           MOVE WS-TARGET-ACCT-NBR TO TRAN-ACCT-NBR
+           ADD 1 TO WS-TRAN-SEQ-CTR
+           MOVE WS-TRAN-SEQ-CTR    TO TRAN-SEQ
+           MOVE WS-SOURCE-ACCT-NBR TO TRAN-SOURCE-ACCT
+           WRITE TRAN-HIST-RECORD FROM TRANSACTION-RECORD
+           IF WS-TRAN-FILE-STATUS = '22'
+               ADD 1 TO WS-TRAN-SEQ-CTR
+               MOVE WS-TRAN-SEQ-CTR TO TRAN-SEQ
+               WRITE TRAN-HIST-RECORD FROM TRANSACTION-RECORD
+           END-IF.

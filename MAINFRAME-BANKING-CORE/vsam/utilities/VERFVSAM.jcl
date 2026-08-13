@@ -1,0 +1,18 @@
+  //VERFVSAM  JOB (BANK),'VERIFY VSAM DATASETS',
+  //          CLASS=A,MSGCLASS=A,MSGLEVEL=(1,1)
+  //*
+  //*================================================================*
+  //* JOB: VERFVSAM                                                   *
+  //* PURPOSE: VERIFY VSAM DATASETS AFTER ABNORMAL JOB END           *
+  //* RUN THIS BEFORE RESTARTING A FAILED JOB THAT USES VSAM          *
+  //*================================================================*
+  //STEP1    EXEC PGM=IDCAMS
+  //SYSPRINT DD SYSOUT=*
+  //SYSIN    DD *
+    VERIFY FILE(CUSTMST) DATASET(BANK.CUSTOMER.MASTER)
+    VERIFY FILE(ACCTMST) DATASET(BANK.ACCOUNT.MASTER)
+    VERIFY FILE(TRANHIST) DATASET(BANK.TRANS.HISTORY)
+  /*
+  //CUSTMST  DD DSN=BANK.CUSTOMER.MASTER,DISP=SHR
+  //ACCTMST  DD DSN=BANK.ACCOUNT.MASTER,DISP=SHR
+  //TRANHIST DD DSN=BANK.TRANS.HISTORY,DISP=SHR
